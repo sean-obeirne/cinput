@@ -38,17 +38,10 @@ class CommandWindow:
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
         self.state = self.HELP
 
-    def init(self):
-        stdscr.clear()
-
         curses.curs_set(0)
         curses.noecho()
         curses.set_escdelay(1)
         stdscr.keypad(True)
-
-        stdscr.refresh()
-
-
 
     def draw_box(self, message="", commands: Union[List[str], List[Tuple[str, str]]]=[], default: Union[int, str]="") -> int:
         self.win.erase()
@@ -167,9 +160,3 @@ class CommandWindow:
 
         return default if finput == "" else finput
         
-
-
-def init():
-    cw = CommandWindow()
-        
-    return cw
