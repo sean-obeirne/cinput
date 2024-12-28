@@ -30,6 +30,8 @@ class CommandWindow:
     HELP, INPUT, ADD, DELETE, EDIT, SELECT  =   0,       1,         2,         3,           4,           5,
     HINT_STRINGS                            = ["Help:", "Input:", "Adding:", "Deleting:", "Changing:", "Selecting:"]
 
+    INPUT_POS = 0
+
     def __init__(self):
         self.h = COMMAND_WINDOW_HEIGHT
         self.w = SCREEN_WIDTH
@@ -43,7 +45,7 @@ class CommandWindow:
         curses.set_escdelay(1)
         stdscr.keypad(True)
 
-    def draw_box(self, message="", commands: Union[List[str], List[Tuple[str, str]]]=[], default: Union[int, str]="") -> int:
+    def _draw_box(self, message="", commands: Union[List[str], List[Tuple[str, str]]]=[], default: Union[int, str]="") -> int:
         self.win.erase()
         self.win.attron(BOX_COLOR)
         self.win.box()
@@ -100,11 +102,11 @@ class CommandWindow:
 
     def help(self, commands: Union[List[str], List[Tuple[str, str]]]) -> None:
         self.state = self.HELP
-        self.draw_box(message="", commands=commands)
+        self._draw_box(message="", commands=commands)
 
     def make_selection(self, message, choices, default="", required=False):
         self.state = self.SELECT
-        self.draw_box(message=message, commands=[(str(i+1), str(choice)) for i, choice in enumerate(choices)], default=default)
+        self._draw_box(message=message, commands=[(str(i+1), str(choice)) for i, choice in enumerate(choices)], default=default)
 
         selected_number = -1
         while selected_number not in range(1, len(choices)+1):
@@ -120,43 +122,96 @@ class CommandWindow:
         return choices[selected_number-1]
 
 
-    def get_input(self, message, default="", placeholder_len=0):
+    def _draw_input(self, input, limit=0):
+        if isinstance(input, list):
+            input = "".join(input)
+        # log.info(f"Drawing \"{input}\"")
+
+        bound = SCREEN_WIDTH - self.INPUT_POS - (2 * X_PAD)
+        if limit <= 0:
+            self.win.addstr(Y_PAD, self.INPUT_POS, ' ' * bound)
+        else:
+            self.win.addstr(Y_PAD, self.INPUT_POS, '_' * min(bound, limit))
+        self.win.addstr(Y_PAD, self.INPUT_POS, input)
+        self.win.refresh()
+    
+
+    def get_input(self, message, default="", limit=0):
         self.state = self.INPUT
-        mlen = self.draw_box(message, default=default)
+        mlen = self._draw_box(message, default=default)
 
-        curses.echo()
+        curses.noecho()
         curses.curs_set(1)
-
-        input_pos = (1 * X_PAD) + mlen + 3
-        input, i = [], -1
         self.win.keypad(True)
-        while (key := self.win.getch(1, input_pos + i)):
-            if key in (10, 13):
+
+
+
+
+        self.INPUT_POS = (1 * X_PAD) + mlen + X_PAD
+        length_bound = limit if limit > 0 else SCREEN_WIDTH - self.INPUT_POS - (2 * X_PAD)
+        # log.info(length_bound)
+        input, i, end = [], 0, 0
+        self._draw_input(input, limit)
+        while (key := self.win.getch(Y_PAD, self.INPUT_POS + i)):
+            log.info(key)
+            if key in (10, 13): # enter
                 break
-            elif key == 27:
+            elif key == 27: # escape
                 input.clear()
                 break
             elif key == curses.KEY_BACKSPACE:
-                if len(input) > 0:
-                    input.pop(i)
+                if i > 0:
                     i -= 1
-                self.win.addstr(1, input_pos + i, ('_' if placeholder_len > 0 else ' '))
-                self.win.move(1, input_pos + i - 1)
-                self.win.refresh()
+                    end -= 1
+                    input.pop(i)
+                    self._draw_input(input, limit)
                 continue
-            # elif key == curses.KEY_LEFT:
-            #     i -= 1
-            #     self.win.move(1, input_pos + i - 1)
-            #     self.win.refresh()
-            #     continue
-            input.append(chr(key))
-            i += 1
+            elif key == curses.KEY_DC:
+                if i < end:
+                    # i -= 1
+                    end -= 1
+                    input.pop(i)
+                    self._draw_input(input, limit)
+                continue
+            elif key == curses.KEY_LEFT:
+                if i > 0:
+                    i -= 1
+                continue
+            elif key == curses.KEY_RIGHT:
+                # if cpos < end:
+                if i < length_bound and i < end:
+                    i += 1
+                continue
+            elif key == curses.KEY_HOME:
+                i = 0
+                continue
+            elif key == curses.KEY_END:
+                i = end
+                continue
+
+            log.info(f"BEFORE: i : {i}, end : {end}, length_bound : {length_bound}")
+
+            if i < length_bound:
+                if i == end: # we are appending to the end of the string
+                    input.append(chr(key))
+                    end += 1
+                    i += 1
+                elif i < end: # we are in the middle of a string
+                    input.pop(i)
+                    input.insert(i, chr(key))
+                    i += 1
+                elif i > end: # should not happen
+                    end += 1
+            if end > length_bound: # should not happen
+                end -= 1
+
+            log.info(f"AFTER: i : {i}, end : {end}, length_bound : {length_bound}")
+            self._draw_input(input, limit)
 
         finput = "".join(input)
-            
+
         curses.curs_set(0)
         curses.noecho()
-
 
         return default if finput == "" else finput
         
