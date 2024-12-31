@@ -1,6 +1,9 @@
 import curses
 import logging
 from typing import List, Tuple, Union, cast
+import os
+from sys import maxsize
+from pathlib import Path
 
 from ccolors import * # pyright: ignore[reportWildcardImportFromLibrary]
 
@@ -32,6 +35,10 @@ class CommandWindow:
 
     INPUT_POS = 0
 
+    APP_DATA_DIR = f"{os.path.expanduser('~')}/.local/share/projectarium"
+    HISTORY_FILE = f"{os.path.expanduser('~')}/.local/share/projectarium/history"
+
+
     def __init__(self):
         self.h = COMMAND_WINDOW_HEIGHT
         self.w = SCREEN_WIDTH
@@ -40,10 +47,13 @@ class CommandWindow:
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
         self.state = self.HELP
 
+        self.history = self._read_history_file()
+
         curses.curs_set(0)
         curses.noecho()
         curses.set_escdelay(1)
         stdscr.keypad(True)
+
 
     def _draw_box(self, message="", commands: Union[List[str], List[Tuple[str, str]]]=[], default: Union[int, str]="") -> int:
         self.win.erase()
@@ -89,6 +99,7 @@ class CommandWindow:
         self.win.refresh()
         return mlen
 
+
     def create_shortcuts(self, commands: Union[List[str], List[Tuple[str, str]]]) -> List[Tuple[str, str]]:
         if commands and isinstance(commands[0], tuple):
             return cast(List[Tuple[str, str]], commands) # users can define their own shortcut tuples
@@ -100,9 +111,11 @@ class CommandWindow:
             used_shortcuts.append(shortcut[0])
         return commands_map
 
+
     def help(self, commands: Union[List[str], List[Tuple[str, str]]]) -> None:
         self.state = self.HELP
         self._draw_box(message="", commands=commands)
+
 
     def make_selection(self, message, choices, default="", required=False):
         self.state = self.SELECT
@@ -122,56 +135,101 @@ class CommandWindow:
         return choices[selected_number-1]
 
 
-    def _draw_input(self, input, limit=0):
-        if isinstance(input, list):
-            input = "".join(input)
-        # log.info(f"Drawing \"{input}\"")
+    def _draw_text_buffer(self, text_buffer, limit):
+        if isinstance(text_buffer, list):
+            text_buffer = "".join(text_buffer)
+        # log.info(f"Drawing \"{text_buffer}\"")
 
-        bound = SCREEN_WIDTH - self.INPUT_POS - (2 * X_PAD)
-        if limit <= 0:
-            self.win.addstr(Y_PAD, self.INPUT_POS, ' ' * bound)
-        else:
-            self.win.addstr(Y_PAD, self.INPUT_POS, '_' * min(bound, limit))
-        self.win.addstr(Y_PAD, self.INPUT_POS, input)
+        self.win.addstr(Y_PAD, self.INPUT_POS, '_' * limit)
+        self.win.addstr(Y_PAD, self.INPUT_POS, text_buffer)
+        self.win.move(Y_PAD, self.INPUT_POS + len(text_buffer))
         self.win.refresh()
+        return len(text_buffer)
     
 
-    def get_input(self, message, default="", limit=0):
+    def _read_history_file(self,):
+        history = []
+        os.makedirs(self.APP_DATA_DIR, exist_ok=True)
+
+        if os.path.exists(self.HISTORY_FILE):
+            with open(self.HISTORY_FILE, 'r') as file:
+                lines = file.readlines()
+                for line in lines:
+                    history.append(line.strip())
+        return history
+
+    def _add_history_line(self, line):
+        with open(self.HISTORY_FILE, 'a') as file:
+            file.write(f"{line}\n")
+
+
+    def get_input(self, message, default="", limit=maxsize):
         self.state = self.INPUT
         mlen = self._draw_box(message, default=default)
+        self.INPUT_POS = (1 * X_PAD) + mlen + X_PAD
+        limit = min(SCREEN_WIDTH - self.INPUT_POS - (2 * X_PAD), limit)
+        # log.info(limit)
 
         curses.noecho()
         curses.curs_set(1)
         self.win.keypad(True)
 
+        text_buffer = []    # text the user has typed 
+        i = 0               # index in text_buffer, for insertion
+        end = 0             # end index of the current line (len(text_buffer)?)
+        hist_ptr = len(self.history)    # where are we in history?
+        temp_text_buffer = []           # temp space for saved but not visible text buffer
 
+        self._draw_text_buffer(text_buffer, limit)
 
-
-        self.INPUT_POS = (1 * X_PAD) + mlen + X_PAD
-        length_bound = limit if limit > 0 else SCREEN_WIDTH - self.INPUT_POS - (2 * X_PAD)
-        # log.info(length_bound)
-        input, i, end = [], 0, 0
-        self._draw_input(input, limit)
-        while (key := self.win.getch(Y_PAD, self.INPUT_POS + i)):
+################################################################################
+        while (key := self.win.getch()):
             log.info(key)
             if key in (10, 13): # enter
+                self._add_history_line("".join(text_buffer))
                 break
             elif key == 27: # escape
-                input.clear()
+                text_buffer.clear()
                 break
             elif key == curses.KEY_BACKSPACE:
                 if i > 0:
                     i -= 1
                     end -= 1
-                    input.pop(i)
-                    self._draw_input(input, limit)
+                    if hist_ptr < len(self.history): # we are in history
+                        text_buffer = list(self.history[hist_ptr])
+                    log.info(f"right before backspace: i : {i}, end : {end}, limit : {limit}, text_buffer : {text_buffer}, temp_text_buffer : {temp_text_buffer}")
+                    text_buffer.pop(i)
+                    # asset text buffer as new temp
+                    self._draw_text_buffer(text_buffer, limit)
                 continue
             elif key == curses.KEY_DC:
                 if i < end:
                     # i -= 1
                     end -= 1
-                    input.pop(i)
-                    self._draw_input(input, limit)
+                    text_buffer.pop(i)
+                    self._draw_text_buffer(text_buffer, limit)
+                continue
+################################################################################
+            elif key == curses.KEY_UP:
+                if hist_ptr > 0:
+                    if hist_ptr == len(self.history):
+                        temp_text_buffer = text_buffer
+                    hist_ptr -= 1
+                    if hist_ptr < len(self.history) and len(text_buffer) < limit:
+                        text_buffer = list(self.history[hist_ptr])
+                    else:
+                        text_buffer = list(temp_text_buffer)
+                    log.info(f"new pos?? : {self.INPUT_POS + len(text_buffer)}")
+                    i = self._draw_text_buffer(text_buffer, limit)
+                continue
+            elif key == curses.KEY_DOWN:
+                if hist_ptr < len(self.history):
+                    hist_ptr += 1
+                    if hist_ptr < len(self.history) and len(text_buffer) < limit:
+                        text_buffer = self.history[hist_ptr]
+                    elif hist_ptr == len(self.history):
+                        text_buffer = temp_text_buffer
+                    i = self._draw_text_buffer(text_buffer, limit)
                 continue
             elif key == curses.KEY_LEFT:
                 if i > 0:
@@ -179,7 +237,7 @@ class CommandWindow:
                 continue
             elif key == curses.KEY_RIGHT:
                 # if cpos < end:
-                if i < length_bound and i < end:
+                if i < limit and i < end:
                     i += 1
                 continue
             elif key == curses.KEY_HOME:
@@ -189,29 +247,42 @@ class CommandWindow:
                 i = end
                 continue
 
-            log.info(f"BEFORE: i : {i}, end : {end}, length_bound : {length_bound}")
+            log.info(f"BEFORE: i : {i}, end : {end}, limit : {limit}")
 
-            if i < length_bound:
+            if hist_ptr <= len(self.history):
+                temp_text_buffer = list(text_buffer)
+                hist_ptr = len(self.history)
+                end = len(temp_text_buffer)
+                i = end
+
+
+            text_buffer = list(text_buffer)
+            if i < limit:
                 if i == end: # we are appending to the end of the string
-                    input.append(chr(key))
+                    text_buffer.append(chr(key))
                     end += 1
                     i += 1
                 elif i < end: # we are in the middle of a string
-                    input.pop(i)
-                    input.insert(i, chr(key))
+                    text_buffer.pop(i)
+                    text_buffer.insert(i, chr(key))
                     i += 1
                 elif i > end: # should not happen
-                    end += 1
-            if end > length_bound: # should not happen
+                    end = i
+            if end > limit: # should not happen
                 end -= 1
 
-            log.info(f"AFTER: i : {i}, end : {end}, length_bound : {length_bound}")
-            self._draw_input(input, limit)
+            log.info(f"AFTER: i : {i}, end : {end}, limit : {limit}")
+            self._draw_text_buffer(text_buffer, limit)
 
-        finput = "".join(input)
+
+
+        finput = "".join(text_buffer)
 
         curses.curs_set(0)
         curses.noecho()
-
-        return default if finput == "" else finput
         
+        if finput:
+            self.history.append(finput)
+            return finput
+        self.history.append(default)
+        return default
