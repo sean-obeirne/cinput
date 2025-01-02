@@ -4,6 +4,7 @@ from typing import List, Tuple, Union, cast
 import os
 from sys import maxsize
 from pathlib import Path
+from copy import deepcopy
 
 from ccolors import * # pyright: ignore[reportWildcardImportFromLibrary]
 
@@ -33,12 +34,6 @@ class CommandWindow:
     HELP, INPUT, ADD, DELETE, EDIT, SELECT  =   0,       1,         2,         3,           4,           5,
     HINT_STRINGS                            = ["Help:", "Input:", "Adding:", "Deleting:", "Changing:", "Selecting:"]
 
-    INPUT_POS = 0
-
-    APP_DATA_DIR = f"{os.path.expanduser('~')}/.local/share/projectarium"
-    HISTORY_FILE = f"{os.path.expanduser('~')}/.local/share/projectarium/history"
-
-
     def __init__(self):
         self.h = COMMAND_WINDOW_HEIGHT
         self.w = SCREEN_WIDTH
@@ -46,8 +41,6 @@ class CommandWindow:
         self.x = 0
         self.win = curses.newwin(self.h, self.w, self.y, self.x)
         self.state = self.HELP
-
-        self.history = self._read_history_file()
 
         curses.curs_set(0)
         curses.noecho()
@@ -134,155 +127,252 @@ class CommandWindow:
                 selected_number = -1
         return choices[selected_number-1]
 
+    def get_input(self, message, default="", bound=maxsize):
+            self.state = self.INPUT
+            mlen = self._draw_box(message, default=default)
 
-    def _draw_text_buffer(self, text_buffer, limit):
-        if isinstance(text_buffer, list):
-            text_buffer = "".join(text_buffer)
-        # log.info(f"Drawing \"{text_buffer}\"")
+            input_pos = (1 * X_PAD) + mlen + X_PAD
+            bound = min(SCREEN_WIDTH - input_pos - (2 * X_PAD), bound)
 
-        self.win.addstr(Y_PAD, self.INPUT_POS, '_' * limit)
-        self.win.addstr(Y_PAD, self.INPUT_POS, text_buffer)
-        self.win.move(Y_PAD, self.INPUT_POS + len(text_buffer))
-        self.win.refresh()
-        return len(text_buffer)
-    
+            curses.noecho()
+            curses.curs_set(1)
+            self.win.keypad(True)
 
-    def _read_history_file(self,):
-        history = []
-        os.makedirs(self.APP_DATA_DIR, exist_ok=True)
+            ti = self.TextInput(self, default, input_pos, bound)
+            finput = ti.get_input()
 
-        if os.path.exists(self.HISTORY_FILE):
-            with open(self.HISTORY_FILE, 'r') as file:
-                lines = file.readlines()
-                for line in lines:
-                    history.append(line.strip())
-        return history
+            curses.curs_set(0)
+            curses.noecho()
 
-    def _add_history_line(self, line):
-        with open(self.HISTORY_FILE, 'a') as file:
-            file.write(f"{line}\n")
-
-
-    def get_input(self, message, default="", limit=maxsize):
-        self.state = self.INPUT
-        mlen = self._draw_box(message, default=default)
-        self.INPUT_POS = (1 * X_PAD) + mlen + X_PAD
-        limit = min(SCREEN_WIDTH - self.INPUT_POS - (2 * X_PAD), limit)
-        # log.info(limit)
-
-        curses.noecho()
-        curses.curs_set(1)
-        self.win.keypad(True)
-
-        text_buffer = []    # text the user has typed 
-        i = 0               # index in text_buffer, for insertion
-        end = 0             # end index of the current line (len(text_buffer)?)
-        hist_ptr = len(self.history)    # where are we in history?
-        temp_text_buffer = []           # temp space for saved but not visible text buffer
-
-        self._draw_text_buffer(text_buffer, limit)
-
-################################################################################
-        while (key := self.win.getch()):
-            log.info(key)
-            if key in (10, 13): # enter
-                self._add_history_line("".join(text_buffer))
-                break
-            elif key == 27: # escape
-                text_buffer.clear()
-                break
-            elif key == curses.KEY_BACKSPACE:
-                if i > 0:
-                    i -= 1
-                    end -= 1
-                    if hist_ptr < len(self.history): # we are in history
-                        text_buffer = list(self.history[hist_ptr])
-                    log.info(f"right before backspace: i : {i}, end : {end}, limit : {limit}, text_buffer : {text_buffer}, temp_text_buffer : {temp_text_buffer}")
-                    text_buffer.pop(i)
-                    # asset text buffer as new temp
-                    self._draw_text_buffer(text_buffer, limit)
-                continue
-            elif key == curses.KEY_DC:
-                if i < end:
-                    # i -= 1
-                    end -= 1
-                    text_buffer.pop(i)
-                    self._draw_text_buffer(text_buffer, limit)
-                continue
-################################################################################
-            elif key == curses.KEY_UP:
-                if hist_ptr > 0:
-                    if hist_ptr == len(self.history):
-                        temp_text_buffer = text_buffer
-                    hist_ptr -= 1
-                    if hist_ptr < len(self.history) and len(text_buffer) < limit:
-                        text_buffer = list(self.history[hist_ptr])
-                    else:
-                        text_buffer = list(temp_text_buffer)
-                    log.info(f"new pos?? : {self.INPUT_POS + len(text_buffer)}")
-                    i = self._draw_text_buffer(text_buffer, limit)
-                continue
-            elif key == curses.KEY_DOWN:
-                if hist_ptr < len(self.history):
-                    hist_ptr += 1
-                    if hist_ptr < len(self.history) and len(text_buffer) < limit:
-                        text_buffer = self.history[hist_ptr]
-                    elif hist_ptr == len(self.history):
-                        text_buffer = temp_text_buffer
-                    i = self._draw_text_buffer(text_buffer, limit)
-                continue
-            elif key == curses.KEY_LEFT:
-                if i > 0:
-                    i -= 1
-                continue
-            elif key == curses.KEY_RIGHT:
-                # if cpos < end:
-                if i < limit and i < end:
-                    i += 1
-                continue
-            elif key == curses.KEY_HOME:
-                i = 0
-                continue
-            elif key == curses.KEY_END:
-                i = end
-                continue
-
-            log.info(f"BEFORE: i : {i}, end : {end}, limit : {limit}")
-
-            if hist_ptr <= len(self.history):
-                temp_text_buffer = list(text_buffer)
-                hist_ptr = len(self.history)
-                end = len(temp_text_buffer)
-                i = end
-
-
-            text_buffer = list(text_buffer)
-            if i < limit:
-                if i == end: # we are appending to the end of the string
-                    text_buffer.append(chr(key))
-                    end += 1
-                    i += 1
-                elif i < end: # we are in the middle of a string
-                    text_buffer.pop(i)
-                    text_buffer.insert(i, chr(key))
-                    i += 1
-                elif i > end: # should not happen
-                    end = i
-            if end > limit: # should not happen
-                end -= 1
-
-            log.info(f"AFTER: i : {i}, end : {end}, limit : {limit}")
-            self._draw_text_buffer(text_buffer, limit)
+            if finput:
+                return finput
+            return default
 
 
 
-        finput = "".join(text_buffer)
 
-        curses.curs_set(0)
-        curses.noecho()
+    class TextInput:
+
+        DATA_DIR = f"{os.path.expanduser('~')}/.local/share/projectarium"
+        HISTORY_FILE = f"{DATA_DIR}/history"
+
+
+        def __init__(self, parent, default, input_pos, bound):
+            self.parent = parent
+            self.win = parent.win
+            self.history = self._read_history_file()
+
+            self.default = default
+            self.input_pos = input_pos
+            self.bound = bound
+
+            self.text_buffer: List[str] = []    # text the user has typed 
+            self.i: int = 0               # index in text_buffer, for insertion
+            # self.end = 0             # end index of the current line (len(text_buffer)?)
+            self.hist_ptr = len(self.history)    # where are we in history?
+            self.saved_text_buffer: List[str] = []          # temp space for saved but not visible text buffer
+
+            self._draw_text_buffer()
+
+            curses.noecho()
+            curses.curs_set(1)
+            self.win.keypad(True)
+
+        def _get_active_buffer_string(self):
+            return "".join(self.history[self.hist_ptr]) if self.hist_ptr < len(self.history) else "".join(self.text_buffer)
+
+
+        def _draw_text_buffer(self):
+            self.win.addstr(Y_PAD, self.input_pos, '_' * self.bound)
+            self.win.addstr(Y_PAD, self.input_pos, self._get_active_buffer_string())
+            # self.win.move(Y_PAD, self.input_pos + len(text_string))
+            self.win.move(Y_PAD, self.input_pos + self.i)
+            self.win.refresh()
+            return len(self.text_buffer)
         
-        if finput:
-            self.history.append(finput)
-            return finput
-        self.history.append(default)
-        return default
+
+        def _read_history_file(self,):
+            history = []
+            os.makedirs(self.DATA_DIR, exist_ok=True)
+
+            if os.path.exists(self.HISTORY_FILE):
+                with open(self.HISTORY_FILE, 'r') as file:
+                    lines = file.readlines()
+                    for line in lines:
+                        history.append(line.strip())
+            return history
+
+        def _add_history_line(self, line):
+            with open(self.HISTORY_FILE, 'a') as file:
+                file.write(f"{line}\n")
+
+        def save(self):
+            self._add_history_line("".join(self.text_buffer))
+        def escape(self):
+            self.text_buffer.clear()
+        def backspace(self):
+            self.text_buffer.pop(self.i)
+            ####
+        def delete(self):
+            self.text_buffer.pop(self.i)
+            ####
+
+        def up(self):
+            if not self.saved_text_buffer: # existence means we have saved text
+                # self.saved_text_buffer = self.text_buffer
+                self.saved_text_buffer = deepcopy(self.text_buffer)
+                log.info(f"Saved buffer: {self.saved_text_buffer}")
+            self.hist_ptr -= 1
+            self.i = len(self._get_active_buffer_string())
+            # self.edit() 
+
+        def down(self):
+            log.info(f"Saved buffer (going down): {self.saved_text_buffer}")
+            self.hist_ptr += 1
+            if self.saved_text_buffer and self.hist_ptr == len(self.history):
+                self.text_buffer = deepcopy(self.saved_text_buffer)
+                self.saved_text_buffer.clear() # TODO: remove cast
+            self.i = len(self._get_active_buffer_string())
+            # self.edit()
+
+        def left(self):
+            self.i -= 1
+            # self.edit()
+
+        def right(self):
+            self.i += 1
+            # self.edit()
+
+        def home(self):
+            pass
+        def end(self):
+            pass
+
+        def edit(self): # say "this is our new text buffer
+            if self.hist_ptr < len(self.history): # if we are in history
+                self.saved_text_buffer.clear() # clear because we are now editting
+                self.text_buffer = deepcopy(list(self.history[self.hist_ptr])) # text_buffer = current line in hist
+                self.hist_ptr = len(self.history)
+                # self.saved_text_buffer = self.text_buffer
+
+
+                
+                # saved_text_buffer = list(self.text_buffer)
+                # hist_ptr = len(self.history)
+                # end = len(temp_text_buffer)
+                # i = end
+
+        def bring_to_reality(self):
+            pass
+
+        def get_input(self):
+            curses.noecho()
+            curses.curs_set(1)
+            self.win.keypad(True)
+
+
+            while (key := self.win.getch()):
+                log.info(key)
+                if key in (10, 13): # enter
+                    if self.hist_ptr != len(self.history): # we were not at a good location
+                        self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
+                        self._draw_text_buffer()
+                        continue
+                    else:
+                        break
+                elif key == 27: # escape
+                    if self.hist_ptr != len(self.history): # we were not at a good location
+                        self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
+                        self._draw_text_buffer()
+                        continue
+                    else:
+                        return ""
+
+################################################################################
+                if key == curses.KEY_BACKSPACE:
+                    if i > 0:
+                        i -= 1
+                        end -= 1
+                        if hist_ptr < len(self.history): # we are in history
+                            text_buffer = list(self.history[hist_ptr])
+                        log.info(f"right before backspace: i : {i}, end : {end}, bound : {self.bound}, text_buffer : {text_buffer}, temp_text_buffer : {temp_text_buffer}")
+                        text_buffer.pop(i)
+                        # asset text buffer as new temp
+                        self._draw_text_buffer(text_buffer, self.bound)
+                    continue
+                elif key == curses.KEY_DC:
+                    if i < end:
+                        # i -= 1
+                        end -= 1
+                        text_buffer.pop(i)
+                        self._draw_text_buffer(text_buffer, self.bound)
+                    continue
+################################################################################
+                elif key == curses.KEY_UP:
+                    if self.hist_ptr > 0:
+                        self.up()
+                        self._draw_text_buffer()
+                    continue
+                elif key == curses.KEY_DOWN:
+                    if self.hist_ptr < len(self.history):
+                        self.down()
+                    self._draw_text_buffer()
+                    continue
+                elif key == curses.KEY_LEFT:
+                    if self.i > 0:
+                        self.left()
+                    self._draw_text_buffer()
+                    continue
+                elif key == curses.KEY_RIGHT:
+                    if self.i < self.bound and self.i < len(self._get_active_buffer_string()):
+                        self.right()
+                    self._draw_text_buffer()
+                    continue
+                elif key == curses.KEY_HOME:
+                    self.i = 0
+                    self._draw_text_buffer()
+                    continue
+                elif key == curses.KEY_END:
+                    self.i = len(self._get_active_buffer_string())
+                    self._draw_text_buffer()
+                    continue
+
+                else: # regular character to print
+                    log.info(f"BEFORE: i : {self.i}, buffer : {self._get_active_buffer_string()} bound : {self.bound}")
+
+                    self.edit()
+
+                    # self.text_buffer.append(chr(key))
+                    self.text_buffer.insert(self.i, chr(key))
+                    self.i += 1
+                    # text_buffer = list(text_buffer)
+                    # if i < self.bound:
+                    #     if i == end: # we are appending to the end of the string
+                    #         text_buffer.append(chr(key))
+                    #         end += 1
+                    #         i += 1
+                    #     elif i < end: # we are in the middle of a string
+                    #         text_buffer.pop(i)
+                    #         text_buffer.insert(i, chr(key))
+                    #         i += 1
+                    #     elif i > end: # should not happen
+                    #         end = i
+                    # if end > self.bound: # should not happen
+                    #     end -= 1
+                    #
+                    # log.info(f"AFTER: i : {i}, end : {end}, bound : {self.bound}")
+                    # self._draw_text_buffer(text_buffer, self.bound)
+                    self._draw_text_buffer()
+
+
+
+            finput = "".join(self.text_buffer)
+
+            curses.curs_set(0)
+            curses.noecho()
+            
+            if finput:
+                self._add_history_line(finput)
+                return finput
+            self._add_history_line(self.default)
+            return self.default
