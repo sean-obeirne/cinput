@@ -185,7 +185,6 @@ class CommandWindow:
         def _draw_text_buffer(self):
             self.win.addstr(Y_PAD, self.input_pos, '_' * self.bound)
             self.win.addstr(Y_PAD, self.input_pos, self._get_active_buffer_string())
-            # self.win.move(Y_PAD, self.input_pos + len(text_string))
             self.win.move(Y_PAD, self.input_pos + self.i)
             self.win.refresh()
             return len(self.text_buffer)
@@ -199,7 +198,7 @@ class CommandWindow:
                 with open(self.HISTORY_FILE, 'r') as file:
                     lines = file.readlines()
                     for line in lines:
-                        history.append(line.strip())
+                        history.append(line.strip('\n'))
             return history
 
         def _add_history_line(self, line):
@@ -211,23 +210,28 @@ class CommandWindow:
         def escape(self):
             self.text_buffer.clear()
         def backspace(self):
+            self.edit()
+            self.i -= 1
             self.text_buffer.pop(self.i)
             ####
         def delete(self):
+            self.edit()
             self.text_buffer.pop(self.i)
+            if self.i == len(self._get_active_buffer_string()) + 1:
+                self.i -= 1
             ####
 
         def up(self):
             if not self.saved_text_buffer: # existence means we have saved text
                 # self.saved_text_buffer = self.text_buffer
                 self.saved_text_buffer = deepcopy(self.text_buffer)
-                log.info(f"Saved buffer: {self.saved_text_buffer}")
+                # log.info(f"Saved buffer: {self.saved_text_buffer}")
             self.hist_ptr -= 1
             self.i = len(self._get_active_buffer_string())
             # self.edit() 
 
         def down(self):
-            log.info(f"Saved buffer (going down): {self.saved_text_buffer}")
+            # log.info(f"Saved buffer (going down): {self.saved_text_buffer}")
             self.hist_ptr += 1
             if self.saved_text_buffer and self.hist_ptr == len(self.history):
                 self.text_buffer = deepcopy(self.saved_text_buffer)
@@ -274,15 +278,18 @@ class CommandWindow:
             while (key := self.win.getch()):
                 log.info(key)
                 if key in (10, 13): # enter
-                    if self.hist_ptr != len(self.history): # we were not at a good location
-                        self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
+                    if self.hist_ptr != len(self.history) and self.saved_text_buffer: # we were not at a good location
+                        self.hist_ptr = len(self.history)  # go to end of history (saved buffer)
                         self._draw_text_buffer()
                         continue
-                    else:
+                    else: # there was no saved buffer, so let's send selected buff string
+                        self.edit() # load selected buff into sendable position
+                        self.hist_ptr = len(self.history)  # go to end of history (saved buffer)
                         break
                 elif key == 27: # escape
                     if self.hist_ptr != len(self.history): # we were not at a good location
                         self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
+                        self.i = 0
                         self._draw_text_buffer()
                         continue
                     else:
@@ -290,22 +297,14 @@ class CommandWindow:
 
 ################################################################################
                 if key == curses.KEY_BACKSPACE:
-                    if i > 0:
-                        i -= 1
-                        end -= 1
-                        if hist_ptr < len(self.history): # we are in history
-                            text_buffer = list(self.history[hist_ptr])
-                        log.info(f"right before backspace: i : {i}, end : {end}, bound : {self.bound}, text_buffer : {text_buffer}, temp_text_buffer : {temp_text_buffer}")
-                        text_buffer.pop(i)
-                        # asset text buffer as new temp
-                        self._draw_text_buffer(text_buffer, self.bound)
+                    if self.i > 0:
+                        self.backspace()
+                        self._draw_text_buffer()
                     continue
                 elif key == curses.KEY_DC:
-                    if i < end:
-                        # i -= 1
-                        end -= 1
-                        text_buffer.pop(i)
-                        self._draw_text_buffer(text_buffer, self.bound)
+                    if self.i < len(self._get_active_buffer_string()):
+                        self.delete()
+                        self._draw_text_buffer()
                     continue
 ################################################################################
                 elif key == curses.KEY_UP:
@@ -338,7 +337,7 @@ class CommandWindow:
                     continue
 
                 else: # regular character to print
-                    log.info(f"BEFORE: i : {self.i}, buffer : {self._get_active_buffer_string()} bound : {self.bound}")
+                    # log.info(f"BEFORE: i : {self.i}, buffer : {self._get_active_buffer_string()} bound : {self.bound}")
 
                     self.edit()
 
