@@ -144,6 +144,9 @@ class CommandWindow:
             curses.curs_set(0)
             curses.noecho()
 
+            if bound <= 0:
+                return ""
+
             if finput:
                 return finput
             return default
@@ -207,45 +210,54 @@ class CommandWindow:
 
         def save(self):
             self._add_history_line("".join(self.text_buffer))
+
         def escape(self):
             self.text_buffer.clear()
+
         def backspace(self):
             self.edit()
             self.i -= 1
             self.text_buffer.pop(self.i)
-            ####
+
         def delete(self):
             self.edit()
             self.text_buffer.pop(self.i)
             if self.i == len(self._get_active_buffer_string()) + 1:
                 self.i -= 1
-            ####
 
         def up(self):
             if not self.saved_text_buffer: # existence means we have saved text
                 # self.saved_text_buffer = self.text_buffer
                 self.saved_text_buffer = deepcopy(self.text_buffer)
                 # log.info(f"Saved buffer: {self.saved_text_buffer}")
-            self.hist_ptr -= 1
-            self.i = len(self._get_active_buffer_string())
-            # self.edit() 
+            if self.hist_ptr > 0 and len(self.history[self.hist_ptr-1]) <= self.bound:
+                self.hist_ptr -= 1
+                self.i = len(self._get_active_buffer_string())
+            else:
+                if self.hist_ptr > 0:
+                    self.hist_ptr -= 1
+                    self.up()
+                else:
+                    self.hist_ptr -= 1
 
         def down(self):
             # log.info(f"Saved buffer (going down): {self.saved_text_buffer}")
-            self.hist_ptr += 1
+            if self.hist_ptr < len(self.history) - 1 and len(self.history[self.hist_ptr+1]) <= self.bound:
+                self.hist_ptr += 1
+            else:
+                self.hist_ptr += 1
+                if self.hist_ptr < len(self.history) - 1:
+                    self.down()
             if self.saved_text_buffer and self.hist_ptr == len(self.history):
                 self.text_buffer = deepcopy(self.saved_text_buffer)
-                self.saved_text_buffer.clear() # TODO: remove cast
+                self.saved_text_buffer.clear()
             self.i = len(self._get_active_buffer_string())
-            # self.edit()
 
         def left(self):
             self.i -= 1
-            # self.edit()
 
         def right(self):
             self.i += 1
-            # self.edit()
 
         def home(self):
             pass
@@ -274,14 +286,14 @@ class CommandWindow:
             curses.curs_set(1)
             self.win.keypad(True)
 
-
             while (key := self.win.getch()):
                 log.info(key)
+                if self.bound <= 0:
+                    return ""
+
                 if key in (10, 13): # enter
                     if self.hist_ptr != len(self.history) and self.saved_text_buffer: # we were not at a good location
                         self.hist_ptr = len(self.history)  # go to end of history (saved buffer)
-                        self._draw_text_buffer()
-                        continue
                     else: # there was no saved buffer, so let's send selected buff string
                         self.edit() # load selected buff into sendable position
                         self.hist_ptr = len(self.history)  # go to end of history (saved buffer)
@@ -290,80 +302,37 @@ class CommandWindow:
                     if self.hist_ptr != len(self.history): # we were not at a good location
                         self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
                         self.i = 0
-                        self._draw_text_buffer()
-                        continue
                     else:
                         return ""
-
-################################################################################
-                if key == curses.KEY_BACKSPACE:
+                elif key == curses.KEY_BACKSPACE:
                     if self.i > 0:
                         self.backspace()
-                        self._draw_text_buffer()
-                    continue
                 elif key == curses.KEY_DC:
                     if self.i < len(self._get_active_buffer_string()):
                         self.delete()
-                        self._draw_text_buffer()
-                    continue
-################################################################################
                 elif key == curses.KEY_UP:
                     if self.hist_ptr > 0:
                         self.up()
-                        self._draw_text_buffer()
-                    continue
                 elif key == curses.KEY_DOWN:
                     if self.hist_ptr < len(self.history):
                         self.down()
-                    self._draw_text_buffer()
-                    continue
                 elif key == curses.KEY_LEFT:
                     if self.i > 0:
                         self.left()
-                    self._draw_text_buffer()
-                    continue
                 elif key == curses.KEY_RIGHT:
                     if self.i < self.bound and self.i < len(self._get_active_buffer_string()):
                         self.right()
-                    self._draw_text_buffer()
-                    continue
                 elif key == curses.KEY_HOME:
                     self.i = 0
-                    self._draw_text_buffer()
-                    continue
                 elif key == curses.KEY_END:
-                    self.i = len(self._get_active_buffer_string())
-                    self._draw_text_buffer()
-                    continue
-
+                    self.i = min(len(self._get_active_buffer_string()), self.bound)
                 else: # regular character to print
-                    # log.info(f"BEFORE: i : {self.i}, buffer : {self._get_active_buffer_string()} bound : {self.bound}")
-
                     self.edit()
+                    if self.i < self.bound:
+                        self.text_buffer.insert(self.i, chr(key))
+                        self.i += 1
 
-                    # self.text_buffer.append(chr(key))
-                    self.text_buffer.insert(self.i, chr(key))
-                    self.i += 1
-                    # text_buffer = list(text_buffer)
-                    # if i < self.bound:
-                    #     if i == end: # we are appending to the end of the string
-                    #         text_buffer.append(chr(key))
-                    #         end += 1
-                    #         i += 1
-                    #     elif i < end: # we are in the middle of a string
-                    #         text_buffer.pop(i)
-                    #         text_buffer.insert(i, chr(key))
-                    #         i += 1
-                    #     elif i > end: # should not happen
-                    #         end = i
-                    # if end > self.bound: # should not happen
-                    #     end -= 1
-                    #
-                    # log.info(f"AFTER: i : {i}, end : {end}, bound : {self.bound}")
-                    # self._draw_text_buffer(text_buffer, self.bound)
-                    self._draw_text_buffer()
-
-
+                self._draw_text_buffer()
 
             finput = "".join(self.text_buffer)
 
