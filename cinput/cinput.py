@@ -31,7 +31,7 @@ Y_PAD                   = COMMAND_WINDOW_HEIGHT - 2
 X_PAD                   = 2
 
 class CommandWindow:
-    HELP, INPUT, ADD, DELETE, EDIT, SELECT  =   0,       1,         2,         3,           4,           5,
+    HELP, INPUT, ADD, DELETE, EDIT, SELECT  =   0,       1,        2,         3,           4,           5,
     HINT_STRINGS                            = ["Help:", "Input:", "Adding:", "Deleting:", "Changing:", "Selecting:"]
 
     def __init__(self):
@@ -154,26 +154,30 @@ class CommandWindow:
 
 
 
-    class TextInput:
+    class Input:
 
         DATA_DIR = f"{os.path.expanduser('~')}/.local/share/projectarium"
-        HISTORY_FILE = f"{DATA_DIR}/history"
+        # HISTORY_FILE = f"{DATA_DIR}/history"
 
 
-        def __init__(self, parent, default, input_pos, bound):
+        def __init__(self, parent, default, input_pos, bound, history_file_name):
             self.parent = parent
             self.win = parent.win
+
+            self.history_file_name = f"{self.DATA_DIR}/{history_file_name}"
             self.history = self._read_history_file()
+            self.history_matches: List[List[str]] = []
+            self.match_buffer: List[str] = []
+            self.match_index = -1
 
             self.default = default
             self.input_pos = input_pos
             self.bound = bound
 
-            self.text_buffer: List[str] = []    # text the user has typed 
-            self.i: int = 0               # index in text_buffer, for insertion
-            # self.end = 0             # end index of the current line (len(text_buffer)?)
-            self.hist_ptr = len(self.history)    # where are we in history?
-            self.saved_text_buffer: List[str] = []          # temp space for saved but not visible text buffer
+            self.text_buffer: List[str] = []        # text the user has typed 
+            self.cursor_pos = 0                               # index in text_buffer, for insertion
+            self.hist_ptr = len(self.history)       # where are we in history?
+            self.saved_text_buffer: List[str] = []  # temp space for saved but not visible text buffer
 
             self._draw_text_buffer()
 
@@ -188,24 +192,25 @@ class CommandWindow:
         def _draw_text_buffer(self):
             self.win.addstr(Y_PAD, self.input_pos, '_' * self.bound)
             self.win.addstr(Y_PAD, self.input_pos, self._get_active_buffer_string())
-            self.win.move(Y_PAD, self.input_pos + self.i)
+            self.win.addstr(Y_PAD, self.input_pos + self.cursor_pos, "".join(self.match_buffer), DARK_GREY)
+            self.win.move(Y_PAD, self.input_pos + self.cursor_pos)
             self.win.refresh()
             return len(self.text_buffer)
         
 
-        def _read_history_file(self,):
+        def _read_history_file(self):
             history = []
             os.makedirs(self.DATA_DIR, exist_ok=True)
 
-            if os.path.exists(self.HISTORY_FILE):
-                with open(self.HISTORY_FILE, 'r') as file:
+            if os.path.exists(self.history_file_name):
+                with open(self.history_file_name, 'r') as file:
                     lines = file.readlines()
                     for line in lines:
                         history.append(line.strip('\n'))
             return history
 
         def _add_history_line(self, line):
-            with open(self.HISTORY_FILE, 'a') as file:
+            with open(self.history_file_name, 'a') as file:
                 file.write(f"{line}\n")
 
         def save(self):
@@ -216,14 +221,14 @@ class CommandWindow:
 
         def backspace(self):
             self.edit()
-            self.i -= 1
-            self.text_buffer.pop(self.i)
+            self.cursor_pos -= 1
+            self.text_buffer.pop(self.cursor_pos)
 
         def delete(self):
             self.edit()
-            self.text_buffer.pop(self.i)
-            if self.i == len(self._get_active_buffer_string()) + 1:
-                self.i -= 1
+            self.text_buffer.pop(self.cursor_pos)
+            if self.cursor_pos == len(self._get_active_buffer_string()) + 1:
+                self.cursor_pos -= 1
 
         def up(self):
             if not self.saved_text_buffer: # existence means we have saved text
@@ -232,7 +237,7 @@ class CommandWindow:
                 # log.info(f"Saved buffer: {self.saved_text_buffer}")
             if self.hist_ptr > 0 and len(self.history[self.hist_ptr-1]) <= self.bound:
                 self.hist_ptr -= 1
-                self.i = len(self._get_active_buffer_string())
+                self.cursor_pos = len(self._get_active_buffer_string())
             else:
                 if self.hist_ptr > 0:
                     self.hist_ptr -= 1
@@ -251,35 +256,48 @@ class CommandWindow:
             if self.saved_text_buffer and self.hist_ptr == len(self.history):
                 self.text_buffer = deepcopy(self.saved_text_buffer)
                 self.saved_text_buffer.clear()
-            self.i = len(self._get_active_buffer_string())
+            self.cursor_pos = len(self._get_active_buffer_string())
 
         def left(self):
-            self.i -= 1
+            self.cursor_pos -= 1
 
         def right(self):
-            self.i += 1
+            if self.match_index > -1:
+                self._accept_history_match()
+            else:
+                self.cursor_pos += 1
 
-        def home(self):
-            pass
-        def end(self):
-            pass
+        def _load_history_matches(self):
+            self.history_matches = [list(hist_entry) for hist_entry in self.history if hist_entry.startswith(self._get_active_buffer_string())]
+
+        def _next_history_match(self):
+            self.match_index = (self.match_index + 1) % len(self.history_matches)
+            self.edit()
+            self.match_buffer = self.history_matches[self.match_index][len(self.text_buffer):]
+
+        def _accept_history_match(self):
+            self.text_buffer.extend(self.match_buffer)
+            self.history_matches.clear()
+            self.match_buffer.clear()
+            self.match_index = -1
+            self.cursor_pos = len(self.text_buffer)
+
+
+        def history_auto_complete(self):
+            if self.history_matches and self.match_index > -1:
+                self._next_history_match()
+            else:
+                self.match_index = -1
+                self._load_history_matches()
+                self._next_history_match()
+
 
         def edit(self): # say "this is our new text buffer
             if self.hist_ptr < len(self.history): # if we are in history
                 self.saved_text_buffer.clear() # clear because we are now editting
                 self.text_buffer = deepcopy(list(self.history[self.hist_ptr])) # text_buffer = current line in hist
                 self.hist_ptr = len(self.history)
-                # self.saved_text_buffer = self.text_buffer
 
-
-                
-                # saved_text_buffer = list(self.text_buffer)
-                # hist_ptr = len(self.history)
-                # end = len(temp_text_buffer)
-                # i = end
-
-        def bring_to_reality(self):
-            pass
 
         def get_input(self):
             curses.noecho()
@@ -292,7 +310,9 @@ class CommandWindow:
                     return ""
 
                 if key in (10, 13): # enter
-                    if self.hist_ptr != len(self.history) and self.saved_text_buffer: # we were not at a good location
+                    if self.match_index > -1:
+                        self._accept_history_match()
+                    elif self.hist_ptr != len(self.history) and self.saved_text_buffer: # we were not at a good location
                         self.hist_ptr = len(self.history)  # go to end of history (saved buffer)
                     else: # there was no saved buffer, so let's send selected buff string
                         self.edit() # load selected buff into sendable position
@@ -301,14 +321,14 @@ class CommandWindow:
                 elif key == 27: # escape
                     if self.hist_ptr != len(self.history): # we were not at a good location
                         self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
-                        self.i = 0
+                        self.cursor_pos = 0
                     else:
                         return ""
                 elif key == curses.KEY_BACKSPACE:
-                    if self.i > 0:
+                    if self.cursor_pos > 0:
                         self.backspace()
                 elif key == curses.KEY_DC:
-                    if self.i < len(self._get_active_buffer_string()):
+                    if self.cursor_pos < len(self._get_active_buffer_string()):
                         self.delete()
                 elif key == curses.KEY_UP:
                     if self.hist_ptr > 0:
@@ -317,20 +337,22 @@ class CommandWindow:
                     if self.hist_ptr < len(self.history):
                         self.down()
                 elif key == curses.KEY_LEFT:
-                    if self.i > 0:
+                    if self.cursor_pos > 0:
                         self.left()
                 elif key == curses.KEY_RIGHT:
-                    if self.i < self.bound and self.i < len(self._get_active_buffer_string()):
+                    if (self.cursor_pos < self.bound and self.cursor_pos < len(self._get_active_buffer_string())) or self.match_buffer:
                         self.right()
                 elif key == curses.KEY_HOME:
-                    self.i = 0
+                    self.cursor_pos = 0
                 elif key == curses.KEY_END:
-                    self.i = min(len(self._get_active_buffer_string()), self.bound)
+                    self.cursor_pos = min(len(self._get_active_buffer_string()), self.bound)
+                elif key == 9: # tab
+                    self.history_auto_complete()
                 else: # regular character to print
                     self.edit()
-                    if self.i < self.bound:
-                        self.text_buffer.insert(self.i, chr(key))
-                        self.i += 1
+                    if self.cursor_pos < self.bound:
+                        self.text_buffer.insert(self.cursor_pos, chr(key))
+                        self.cursor_pos += 1
 
                 self._draw_text_buffer()
 
@@ -344,3 +366,11 @@ class CommandWindow:
                 return finput
             self._add_history_line(self.default)
             return self.default
+
+    class TextInput(Input):
+        def __init__(self, parent, default, input_pos, bound):
+            super().__init__(parent, default, input_pos, bound, "text_history")
+
+    class PathInput(Input):
+        def __init__(self, parent, default, input_pos, bound):
+            super().__init__(parent, default, input_pos, bound, "path_history")
