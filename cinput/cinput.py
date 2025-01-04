@@ -127,7 +127,7 @@ class CommandWindow:
                 selected_number = -1
         return choices[selected_number-1]
 
-    def get_input(self, message, default="", bound=maxsize):
+    def get_input(self, message, default="", bound=maxsize, input_type="text"):
             self.state = self.INPUT
             mlen = self._draw_box(message, default=default)
 
@@ -138,8 +138,12 @@ class CommandWindow:
             curses.curs_set(1)
             self.win.keypad(True)
 
-            ti = self.TextInput(self, default, input_pos, bound)
-            finput = ti.get_input()
+            if input_type == "text":
+                ti = self.TextInput(self, default, input_pos, bound)
+                finput = ti.get_input()
+            else:
+                pi = self.PathInput(self, default, input_pos, bound)
+                finput = pi.get_input()
 
             curses.curs_set(0)
             curses.noecho()
@@ -234,9 +238,7 @@ class CommandWindow:
 
         def up(self):
             if not self.saved_text_buffer: # existence means we have saved text
-                # self.saved_text_buffer = self.text_buffer
                 self.saved_text_buffer = deepcopy(self.text_buffer)
-                # log.info(f"Saved buffer: {self.saved_text_buffer}")
             if self.hist_ptr > 0 and len(self.history[self.hist_ptr-1]) <= self.bound:
                 self.hist_ptr -= 1
                 self.cursor_pos = len(self._get_active_buffer_string())
@@ -248,7 +250,6 @@ class CommandWindow:
                     self.hist_ptr -= 1
 
         def down(self):
-            # log.info(f"Saved buffer (going down): {self.saved_text_buffer}")
             if self.hist_ptr < len(self.history) - 1 and len(self.history[self.hist_ptr+1]) <= self.bound:
                 self.hist_ptr += 1
             else:
@@ -270,22 +271,13 @@ class CommandWindow:
                 self.cursor_pos += 1
 
         def _load_history_matches(self):
-            # log.info(f"history matches before: {self.history_matches}")
             self.history_matches = [list(hist_entry) for hist_entry in self.history if hist_entry.startswith(self._get_active_buffer_string()) and len(hist_entry) <= self.bound]
-            # log.info(f"history matches after: {self.history_matches}")
             self.history_matches = self.history_matches[::-1] # most recent first
-            # log.info(f"history matches after after: {self.history_matches}")
 
         def _next_history_match(self):
             if self.matches:
                 self.match_index = (self.match_index + 1) % len(self.matches)
                 self.autocomplete_buffer = self.matches[self.match_index]
-                # return self.matches[self.match_index]
-            # else:
-                # log.info(f"history_matches: {self.history_matches}")
-                # self._pull_history_to_current()
-                # self.matches = self.history_matches[self.match_index][len(self.text_buffer):]
-                # log.info(f"this match buffer: {self.matches}")
 
         def _prev_history_match(self):
             if self.history_matches:
@@ -295,7 +287,6 @@ class CommandWindow:
 
         def _accept_history_match(self):
             self.text_buffer.extend(list(self.autocomplete_buffer[self.cursor_pos:]))
-            # self._clear_history_matches()
             self.cursor_pos = len(self.text_buffer)
 
         def _clear_history_matches(self):
@@ -312,7 +303,6 @@ class CommandWindow:
             if self.history_matches:
                 for possible_match in self.history_matches:
                     possible_match_string = "".join(possible_match)
-                    # log.info(f"possible_match: {possible_match_string}")
                     if possible_match_string.startswith(self._get_active_buffer_string()):
                         self.matches.append(possible_match_string)
             pass
@@ -321,20 +311,14 @@ class CommandWindow:
         def extend_autocomplete_pool(self, additions: List[str]):
             if self.history_matches:
                 for addition in additions[::-1]:
-                    # log.info(f"This addition: {str(addition)}")
                     if addition.startswith(self._get_active_buffer_string()):
                         self.history_matches.insert(0, list(addition))
-                        # log.info(f"This addition inserted: {str(addition)}")
-                # self.history_matches.extend([list(addition) for addition in additions])
-                # log.info(self.history_matches)
             pass
             
         def init_autocomplete(self):
             self._clear_history_matches()
             self._load_history_matches()
             self.extend_autocomplete_pool(["we three kings", "we are the good stuff"])
-            # self._next_history_match()
-            pass
 
         def history_autocomplete(self, changed=False, direction=1):
             if self.history_matches:
@@ -376,7 +360,6 @@ class CommandWindow:
                 elif key == 27: # escape
                     if self.matches:
                         self._clear_matches()
-                        # self._clear_history_matches()
                     elif self.hist_ptr != len(self.history): # we were not at a good location
                         self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
                         self.cursor_pos = 0
@@ -385,8 +368,6 @@ class CommandWindow:
                 elif key == curses.KEY_BACKSPACE:
                     if self.cursor_pos > 0:
                         self.backspace()
-                        # self._clear_history_matches()
-                        # if self.cursor_pos > 0:
                         self.history_autocomplete(changed=True)
                 elif key == curses.KEY_DC:
                     if self.cursor_pos < len(self._get_active_buffer_string()):
@@ -416,9 +397,6 @@ class CommandWindow:
                     if self.cursor_pos < self.bound:
                         self.text_buffer.insert(self.cursor_pos, chr(key))
                         self.cursor_pos += 1
-                    # self._clear_history_matches()
-                    # if self.cursor_pos > 0:
-                        # self.history_autocomplete()
                     self.history_autocomplete(changed=True)
 
                 self._draw_text_buffer()
