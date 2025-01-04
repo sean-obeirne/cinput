@@ -167,8 +167,9 @@ class CommandWindow:
             self.history_file_name = f"{self.DATA_DIR}/{history_file_name}"
             self.history = self._read_history_file()
             self.history_matches: List[List[str]] = []
-            self.match_buffer: List[str] = []
+            self.matches: List[str] = []
             self.match_index = -1
+            self.autocomplete_buffer = ""
 
             self.default = default
             self.input_pos = input_pos
@@ -192,7 +193,8 @@ class CommandWindow:
         def _draw_text_buffer(self):
             self.win.addstr(Y_PAD, self.input_pos, '_' * self.bound)
             self.win.addstr(Y_PAD, self.input_pos, self._get_active_buffer_string())
-            self.win.addstr(Y_PAD, self.input_pos + self.cursor_pos, "".join(self.match_buffer), DARK_GREY)
+            if self.autocomplete_buffer:
+                self.win.addstr(Y_PAD, self.input_pos + self.cursor_pos, self.autocomplete_buffer[self.cursor_pos:], DARK_GREY)
             self.win.move(Y_PAD, self.input_pos + self.cursor_pos)
             self.win.refresh()
             return len(self.text_buffer)
@@ -220,12 +222,12 @@ class CommandWindow:
             self.text_buffer.clear()
 
         def backspace(self):
-            self.edit()
+            self._pull_history_to_current()
             self.cursor_pos -= 1
             self.text_buffer.pop(self.cursor_pos)
 
         def delete(self):
-            self.edit()
+            self._pull_history_to_current()
             self.text_buffer.pop(self.cursor_pos)
             if self.cursor_pos == len(self._get_active_buffer_string()) + 1:
                 self.cursor_pos -= 1
@@ -268,31 +270,83 @@ class CommandWindow:
                 self.cursor_pos += 1
 
         def _load_history_matches(self):
-            self.history_matches = [list(hist_entry) for hist_entry in self.history if hist_entry.startswith(self._get_active_buffer_string())]
+            # log.info(f"history matches before: {self.history_matches}")
+            self.history_matches = [list(hist_entry) for hist_entry in self.history if hist_entry.startswith(self._get_active_buffer_string()) and len(hist_entry) <= self.bound]
+            # log.info(f"history matches after: {self.history_matches}")
+            self.history_matches = self.history_matches[::-1] # most recent first
+            # log.info(f"history matches after after: {self.history_matches}")
 
         def _next_history_match(self):
-            self.match_index = (self.match_index + 1) % len(self.history_matches)
-            self.edit()
-            self.match_buffer = self.history_matches[self.match_index][len(self.text_buffer):]
+            if self.matches:
+                self.match_index = (self.match_index + 1) % len(self.matches)
+                self.autocomplete_buffer = self.matches[self.match_index]
+                # return self.matches[self.match_index]
+            # else:
+                # log.info(f"history_matches: {self.history_matches}")
+                # self._pull_history_to_current()
+                # self.matches = self.history_matches[self.match_index][len(self.text_buffer):]
+                # log.info(f"this match buffer: {self.matches}")
+
+        def _prev_history_match(self):
+            if self.history_matches:
+                self.match_index = (self.match_index - 1) % len(self.history_matches)
+                self._pull_history_to_current()
+                self.matches = self.history_matches[self.match_index][len(self.text_buffer):]
 
         def _accept_history_match(self):
-            self.text_buffer.extend(self.match_buffer)
-            self.history_matches.clear()
-            self.match_buffer.clear()
-            self.match_index = -1
+            self.text_buffer.extend(list(self.autocomplete_buffer[self.cursor_pos:]))
+            # self._clear_history_matches()
             self.cursor_pos = len(self.text_buffer)
 
+        def _clear_history_matches(self):
+            self.match_index = -1
+            self.matches.clear()
+            self.history_matches.clear()
 
-        def history_auto_complete(self):
-            if self.history_matches and self.match_index > -1:
-                self._next_history_match()
-            else:
-                self.match_index = -1
-                self._load_history_matches()
-                self._next_history_match()
+        def _clear_matches(self):
+            self.autocomplete_buffer = ""
+            self.matches.clear()
+            self.match_index = -1
+
+        def _filter_autocomplete(self):
+            if self.history_matches:
+                for possible_match in self.history_matches:
+                    possible_match_string = "".join(possible_match)
+                    # log.info(f"possible_match: {possible_match_string}")
+                    if possible_match_string.startswith(self._get_active_buffer_string()):
+                        self.matches.append(possible_match_string)
+            pass
 
 
-        def edit(self): # say "this is our new text buffer
+        def extend_autocomplete_pool(self, additions: List[str]):
+            if self.history_matches:
+                for addition in additions[::-1]:
+                    # log.info(f"This addition: {str(addition)}")
+                    if addition.startswith(self._get_active_buffer_string()):
+                        self.history_matches.insert(0, list(addition))
+                        # log.info(f"This addition inserted: {str(addition)}")
+                # self.history_matches.extend([list(addition) for addition in additions])
+                # log.info(self.history_matches)
+            pass
+            
+        def init_autocomplete(self):
+            self._clear_history_matches()
+            self._load_history_matches()
+            self.extend_autocomplete_pool(["we three kings", "we are the good stuff"])
+            # self._next_history_match()
+            pass
+
+        def history_autocomplete(self, changed=False, direction=1):
+            if self.history_matches:
+                if changed:
+                    self._clear_matches()
+                    self._filter_autocomplete()
+                log.info(f"autocomplete buffer before : {self.autocomplete_buffer}")
+                log.info(f"match buffer : {self.matches}")
+                self._next_history_match() if direction == 1 else self._prev_history_match()
+
+
+        def _pull_history_to_current(self): # say "this is our new text buffer"
             if self.hist_ptr < len(self.history): # if we are in history
                 self.saved_text_buffer.clear() # clear because we are now editting
                 self.text_buffer = deepcopy(list(self.history[self.hist_ptr])) # text_buffer = current line in hist
@@ -304,22 +358,26 @@ class CommandWindow:
             curses.curs_set(1)
             self.win.keypad(True)
 
+            self.init_autocomplete()
+
             while (key := self.win.getch()):
                 log.info(key)
                 if self.bound <= 0:
                     return ""
 
                 if key in (10, 13): # enter
-                    if self.match_index > -1:
-                        self._accept_history_match()
-                    elif self.hist_ptr != len(self.history) and self.saved_text_buffer: # we were not at a good location
+                    if self.hist_ptr != len(self.history) and self.saved_text_buffer: # we were not at a good location
                         self.hist_ptr = len(self.history)  # go to end of history (saved buffer)
+                        self.cursor_pos = min(len(self.saved_text_buffer), self.bound)
                     else: # there was no saved buffer, so let's send selected buff string
-                        self.edit() # load selected buff into sendable position
+                        self._pull_history_to_current() # load selected buff into sendable position
                         self.hist_ptr = len(self.history)  # go to end of history (saved buffer)
                         break
                 elif key == 27: # escape
-                    if self.hist_ptr != len(self.history): # we were not at a good location
+                    if self.matches:
+                        self._clear_matches()
+                        # self._clear_history_matches()
+                    elif self.hist_ptr != len(self.history): # we were not at a good location
                         self.hist_ptr = len(self.history)  # hit end of history (saved buffer)
                         self.cursor_pos = 0
                     else:
@@ -327,6 +385,9 @@ class CommandWindow:
                 elif key == curses.KEY_BACKSPACE:
                     if self.cursor_pos > 0:
                         self.backspace()
+                        # self._clear_history_matches()
+                        # if self.cursor_pos > 0:
+                        self.history_autocomplete(changed=True)
                 elif key == curses.KEY_DC:
                     if self.cursor_pos < len(self._get_active_buffer_string()):
                         self.delete()
@@ -340,19 +401,25 @@ class CommandWindow:
                     if self.cursor_pos > 0:
                         self.left()
                 elif key == curses.KEY_RIGHT:
-                    if (self.cursor_pos < self.bound and self.cursor_pos < len(self._get_active_buffer_string())) or self.match_buffer:
+                    if (self.cursor_pos < self.bound and self.cursor_pos < len(self._get_active_buffer_string())) or self.matches:
                         self.right()
                 elif key == curses.KEY_HOME:
                     self.cursor_pos = 0
                 elif key == curses.KEY_END:
                     self.cursor_pos = min(len(self._get_active_buffer_string()), self.bound)
                 elif key == 9: # tab
-                    self.history_auto_complete()
+                    self.history_autocomplete(direction=1)
+                elif key == curses.KEY_BTAB:
+                    self.history_autocomplete(direction=-1)
                 else: # regular character to print
-                    self.edit()
+                    self._pull_history_to_current()
                     if self.cursor_pos < self.bound:
                         self.text_buffer.insert(self.cursor_pos, chr(key))
                         self.cursor_pos += 1
+                    # self._clear_history_matches()
+                    # if self.cursor_pos > 0:
+                        # self.history_autocomplete()
+                    self.history_autocomplete(changed=True)
 
                 self._draw_text_buffer()
 
