@@ -171,6 +171,7 @@ class CommandWindow:
             self.history_file_name = f"{self.DATA_DIR}/{history_file_name}"
             self.history = self._read_history_file()
             self.history_matches: List[List[str]] = []
+            self.extended_matches: List[List[str]] = []
             self.matches: List[str] = []
             self.match_index = -1
             self.autocomplete_buffer = ""
@@ -299,34 +300,54 @@ class CommandWindow:
             self.matches.clear()
             self.match_index = -1
 
+        def is_partial_match(self, partial_string):
+            log.info(f"matches : {self.matches}")
+            for match in self.matches:
+                if match.startswith(partial_string):
+                    return True
+            return False
+
         def _filter_autocomplete(self):
+            possible_matches = []
             if self.history_matches:
-                for possible_match in self.history_matches:
-                    possible_match_string = "".join(possible_match)
-                    if possible_match_string.startswith(self._get_active_buffer_string()):
-                        self.matches.append(possible_match_string)
-            pass
+                possible_matches.extend(self.history_matches)
+            if self.extended_matches:
+                possible_matches.extend(self.extended_matches)
+            for possible_match in possible_matches:
+                possible_match_string = "".join(possible_match)
+                if possible_match_string.startswith(self._get_active_buffer_string()):
+                    self.matches.append(possible_match_string)
 
 
         def extend_autocomplete_pool(self, additions: List[str]):
-            if self.history_matches:
-                for addition in additions[::-1]:
-                    if addition.startswith(self._get_active_buffer_string()):
-                        self.history_matches.insert(0, list(addition))
-            pass
+            # if self.history_matches:
+            for addition in additions[::-1]:
+                # log.info(addition)
+                if addition.startswith(self._get_active_buffer_string()):
+                    self.extended_matches.insert(0, list(addition))
+                    # self.history_matches.insert(0, list(addition))
+
+        def delete_from_autocomplete_pool(self, addition):
+            if list(addition) in self.extended_matches:
+                self.extended_matches.remove(list(addition))
+
+        def clear_extended_autocomplete_pool(self):
+            self.extended_matches.clear()
+            # if list(addition) in self.history_matches:
+                # self.history_matches.remove(list(addition))
+
             
         def init_autocomplete(self):
             self._clear_history_matches()
             self._load_history_matches()
-            self.extend_autocomplete_pool(["we three kings", "we are the good stuff"])
 
         def history_autocomplete(self, changed=False, direction=1):
             if self.history_matches:
                 if changed:
                     self._clear_matches()
                     self._filter_autocomplete()
-                log.info(f"autocomplete buffer before : {self.autocomplete_buffer}")
-                log.info(f"match buffer : {self.matches}")
+                # log.info(f"autocomplete buffer before : {self.autocomplete_buffer}")
+                # log.info(f"match buffer : {self.matches}")
                 self._next_history_match() if direction == 1 else self._prev_history_match()
 
 
@@ -419,3 +440,33 @@ class CommandWindow:
     class PathInput(Input):
         def __init__(self, parent, default, input_pos, bound):
             super().__init__(parent, default, input_pos, bound, "path_history")
+
+        def validate_path(self):
+            if self._get_active_buffer_string():
+                expanded = os.path.expanduser(self._get_active_buffer_string())
+            else:
+                return RED
+            path_obj = Path(expanded)
+            log.info(self.extended_matches)
+
+            if path_obj.exists():
+                self.clear_extended_autocomplete_pool()
+                if path_obj.is_dir():
+                    self.extend_autocomplete_pool([str(path_obj.absolute() / file.name)for file in path_obj.iterdir()])
+                return GREEN
+            elif self.is_partial_match(self._get_active_buffer_string()):
+                log.info(self._get_active_buffer_string())
+                # self.clear_extended_autocomplete_pool()
+                self.extend_autocomplete_pool([str(path_obj.absolute() / file.name) for file in path_obj.parent.iterdir()])
+                return BRIGHT_YELLOW
+            else:
+                return RED
+
+        def _draw_text_buffer(self):
+            self.win.addstr(Y_PAD, self.input_pos, '_' * self.bound)
+            self.win.addstr(Y_PAD, self.input_pos, self._get_active_buffer_string(), self.validate_path())
+            if self.autocomplete_buffer:
+                self.win.addstr(Y_PAD, self.input_pos + self.cursor_pos, self.autocomplete_buffer[self.cursor_pos:], DARK_GREY)
+            self.win.move(Y_PAD, self.input_pos + self.cursor_pos)
+            self.win.refresh()
+            return len(self.text_buffer)
