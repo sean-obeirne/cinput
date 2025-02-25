@@ -1,0 +1,33 @@
+set state
+draw box
+calc INPUT_POS and length_bound
+set env
+
+initialize 
+draw empty input
+
+loop:
+	get key
+	process special characters
+	
+	check history status
+	check len buffer details
+
+
+
+
+special characters:
+	enter: break
+	escape: clear,break
+	backspace: delete at text_buffer[i-1]
+	delete: delete at text_buffer[i]
+	up: set text_buffer higher in hist
+	down: set text_buffer lower in hist
+	left: decrement i in text_buffer
+	right: increment i in text_buffer
+	home: i in text_buffer = 0
+	end: i in text_buffer = len(text_buffer)
+
+
+
+
