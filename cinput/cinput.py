@@ -442,8 +442,22 @@ class CommandWindow:
     class PathInput(Input):
         def __init__(self, parent: "CommandWindow", default: str, input_pos: int, bound: int):
             super().__init__(parent, default, input_pos, bound, "path_history")
+            self._clean_path_history()
+
+        def _clean_path_history(self):
+            new_content = []
+            with open(self.history_file_name, "r") as file:
+                for line in file.readlines():
+                    if Path(line.strip()).exists():
+                        new_content.append(line)
+            with open(self.history_file_name, "w") as file:
+                for line in new_content:
+                    # log.info(f"adding: {line}")
+                    file.write(line)
+
 
         def validate_path(self) -> int:
+            self._clean_path_history()
             if self._get_active_buffer_string():
                 expanded = os.path.expanduser(self._get_active_buffer_string())
             else:
