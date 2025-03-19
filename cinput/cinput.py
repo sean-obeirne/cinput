@@ -9,9 +9,10 @@ from copy import deepcopy
 from ccolors import * # pyright: ignore[reportWildcardImportFromLibrary]
 
 
+DATA_DIR = f"{os.path.expanduser('~')}/.local/share/cinput/"
 
 # Configure logging
-logging.basicConfig(filename='debug.log', level=logging.DEBUG, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename=f'{DATA_DIR}cinput.log', level=logging.DEBUG, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
 
@@ -48,7 +49,7 @@ class CommandWindow:
         stdscr.keypad(True)
 
 
-    def _draw_box(self, message: str="", commands: Union[List[str], List[Tuple[str, str]]]=[], default: Union[int, str]="") -> int:
+    def _draw_box(self, message: str="", commands: Union[List[str], List[Tuple[str, str]]]=[], default: Union[int, str]="", required: bool=False) -> int:
         self.win.erase()
         self.win.attron(BOX_COLOR)
         self.win.box()
@@ -58,7 +59,9 @@ class CommandWindow:
         if message:
             message = message.strip()
             mlen = max(len(message) + 3 + 4, len(self.HINT_STRINGS[self.state]))
-            self.win.addstr(Y_PAD, (1 * X_PAD), f"  {message}    ", BRIGHT_YELLOW | BOLD)
+            self.win.addstr(Y_PAD, (1 * X_PAD), f"  {message}    ", BRIGHT_YELLOW)
+            if required:
+                self.win.addstr(Y_PAD, (1 * X_PAD) + 2 + len(message), f"*", RED | BOLD)
             self.win.addch(0, mlen, '┬', WHITE)
             for bar_index in range(Y_PAD, COMMAND_WINDOW_HEIGHT - 1):
                 self.win.addch(bar_index, mlen, '│', WHITE)
@@ -127,9 +130,9 @@ class CommandWindow:
                 selected_number = -1
         return choices[selected_number-1]
 
-    def get_input(self, message: str, default: str="", bound: int=maxsize, input_type: str="text") -> str:
+    def get_input(self, message: str, default: str="", bound: int=maxsize, required: bool=False, input_type: str="text") -> str:
             self.state = self.INPUT
-            mlen = self._draw_box(message, default=default)
+            mlen = self._draw_box(message, default=default, required=required)
 
             input_pos = (1 * X_PAD) + mlen + X_PAD
             bound = min(SCREEN_WIDTH - input_pos - (2 * X_PAD), bound)
@@ -138,12 +141,15 @@ class CommandWindow:
             curses.curs_set(1)
             self.win.keypad(True)
 
-            if input_type == "text":
-                ti = self.TextInput(self, default, input_pos, bound)
-                finput = ti.get_input()
-            else:
-                pi = self.PathInput(self, default, input_pos, bound)
-                finput = pi.get_input()
+            while True:
+                if input_type == "text":
+                    ti = self.TextInput(self, default, input_pos, bound)
+                    finput = ti.get_input()
+                else:
+                    pi = self.PathInput(self, default, input_pos, bound)
+                    finput = pi.get_input()
+                if not required or finput != "":
+                    break
 
             curses.curs_set(0)
             curses.noecho()
@@ -160,14 +166,11 @@ class CommandWindow:
 
     class Input:
 
-        DATA_DIR = f"{os.path.expanduser('~')}/.local/share/projectarium"
-
-
         def __init__(self, parent: "CommandWindow", default: str, input_pos: int, bound: int, history_file_name: str) -> None:
             self.parent: "CommandWindow" = parent
             self.win: curses.window = parent.win
 
-            self.history_file_name: str = f"{self.DATA_DIR}/{history_file_name}"
+            self.history_file_name: str = f"{DATA_DIR}{history_file_name}"
             self.history: List[str] = self._read_history_file()
             self.history_matches: List[List[str]] = []
             self.extended_matches: List[List[str]] = []
@@ -206,7 +209,7 @@ class CommandWindow:
 
         def _read_history_file(self) -> List[str]:
             history = []
-            os.makedirs(self.DATA_DIR, exist_ok=True)
+            os.makedirs(DATA_DIR, exist_ok=True)
 
             if os.path.exists(self.history_file_name):
                 with open(self.history_file_name, 'r') as file:
